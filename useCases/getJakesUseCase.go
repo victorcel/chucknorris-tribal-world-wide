@@ -1,40 +1,37 @@
 package useCases
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
 	"github.com/victorcel/chucknorris/models"
 	"io"
+	"log"
 	"net/http"
-	"os"
+	"sync"
+	"time"
 )
 
-func getJokes() (models.JakeModel, error) {
-
-	url := os.Getenv("URL_API")
-
+func getJokes(ctx context.Context, url string) (models.JakeModel, error) {
 	client := &http.Client{}
 
 	modelJake := models.JakeModel{}
 
-	request, err := http.NewRequest(http.MethodGet, url, nil)
-
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		fmt.Println(err.Error())
+		log.Println(err.Error())
 		return modelJake, err
 	}
 
 	response, err := client.Do(request)
-
 	if err != nil {
-		fmt.Println(err.Error())
+		log.Println(err.Error())
 		return modelJake, err
 	}
 
 	defer func(Body io.ReadCloser) {
 		err := Body.Close()
 		if err != nil {
-			fmt.Println(err.Error())
+			log.Println(err.Error())
 		}
 	}(response.Body)
 
@@ -46,25 +43,35 @@ func getJokes() (models.JakeModel, error) {
 	return modelJake, nil
 }
 
-func GetJacksUseCase() ([]models.ResponseJake, error) {
+func GetJacksUseCase(url string) ([]models.ResponseJake, error) {
 	var jokes []models.ResponseJake
 	const NumberObject = 25
 	jokeIDs := make(map[string]bool)
 	jokeChan := make(chan models.JakeModel)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(NumberObject)
 
 	for i := 0; i < NumberObject; i++ {
 		go func() {
-			joke, err := getJokes()
+			defer wg.Done()
+			joke, err := getJokes(ctx, url)
 			if err != nil {
-				fmt.Println(err.Error())
+				log.Println(err.Error())
 				return
 			}
 			jokeChan <- joke
 		}()
 	}
 
-	for i := 0; i < NumberObject; i++ {
-		joke := <-jokeChan
+	go func() {
+		wg.Wait()
+		close(jokeChan)
+	}()
+
+	for joke := range jokeChan {
 		if !jokeIDs[joke.Id] {
 			jokeIDs[joke.Id] = true
 			jokes = append(jokes, models.ResponseJake{
